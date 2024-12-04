@@ -1,14 +1,22 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
 
+	"context"
+	"time"
+
 	"github.com/1729prashant/blog-aggregator/internal/config"
+	"github.com/1729prashant/blog-aggregator/internal/database"
+	"github.com/google/uuid"
+	_ "github.com/lib/pq" // ?? You have to import the driver, but you don't use it directly anywhere in your code. The underscore tells Go that you're importing it for its side effects, not because you need to use it.
 )
 
 type state struct {
+	db     *database.Queries
 	config *config.Config
 }
 
@@ -45,12 +53,59 @@ func handlerLogin(s *state, cmd command) error {
 	}
 
 	username := cmd.args[0]
-	err := s.config.SetUser(username)
+
+	// Check if the user exists
+	existingUser, err := s.db.GetUser(context.Background(), username)
+	if err != nil {
+		return fmt.Errorf("user '%s' is not registered: %v", username, err)
+	}
+
+	if existingUser != username {
+		return fmt.Errorf("user '%s' is not registered", username)
+	}
+
+	// Set the user in the config
+	err = s.config.SetUser(username)
 	if err != nil {
 		return fmt.Errorf("failed to set user: %v", err)
 	}
 
-	fmt.Printf("User has been set to: %s\n", username)
+	fmt.Printf("User '%s' has successfully logged in.\n", username)
+	return nil
+}
+
+func handlerRegister(s *state, cmd command) error {
+	if len(cmd.args) < 1 {
+		return fmt.Errorf("register command requires a username")
+	}
+
+	username := cmd.args[0]
+
+	// Check if the user already exists
+	existingUser, err := s.db.GetUser(context.Background(), username)
+	if err == nil && existingUser == username {
+		return fmt.Errorf("User '%s' already exists.\n", username)
+	}
+
+	// Create a new user
+	now := time.Now()
+	newUser, err := s.db.CreateUser(context.Background(), database.CreateUserParams{
+		ID:        uuid.New(),
+		Name:      username,
+		CreatedAt: now,
+		UpdatedAt: now,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create user: %v", err)
+	}
+
+	// Update the current user in the config
+	err = s.config.SetUser(newUser.Name)
+	if err != nil {
+		return fmt.Errorf("failed to set user in config: %v", err)
+	}
+
+	fmt.Printf("User '%s' created successfully: %+v\n", username, newUser)
 	return nil
 }
 
@@ -61,11 +116,25 @@ func main() {
 		log.Fatalf("Failed to read config: %v", err)
 	}
 
-	appState := &state{config: &cfg}
+	// Open the database connection
+	db, err := sql.Open("postgres", cfg.DbURL)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer db.Close()
+
+	// Initialize database queries
+	dbQueries := database.New(db)
+
+	appState := &state{
+		config: &cfg,
+		db:     dbQueries,
+	}
 
 	// Initialize the commands
 	cmds := &commands{}
 	cmds.register("login", handlerLogin)
+	cmds.register("register", handlerRegister) // To be implemented
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
@@ -84,4 +153,5 @@ func main() {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+
 }
