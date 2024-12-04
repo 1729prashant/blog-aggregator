@@ -9,6 +9,11 @@ import (
 	"context"
 	"time"
 
+	"encoding/xml"
+	"html"
+	"io"
+	"net/http"
+
 	"github.com/1729prashant/blog-aggregator/internal/config"
 	"github.com/1729prashant/blog-aggregator/internal/database"
 	"github.com/google/uuid"
@@ -135,6 +140,84 @@ func GetUsers(s *state, cmd command) error {
 	return nil
 }
 
+type RSSFeed struct {
+	Channel struct {
+		Title       string    `xml:"title"`
+		Link        string    `xml:"link"`
+		Description string    `xml:"description"`
+		Item        []RSSItem `xml:"item"`
+	} `xml:"channel"`
+}
+
+type RSSItem struct {
+	Title       string `xml:"title"`
+	Link        string `xml:"link"`
+	Description string `xml:"description"`
+	PubDate     string `xml:"pubDate"`
+}
+
+func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
+	// Create a new HTTP request with context
+	req, err := http.NewRequestWithContext(ctx, "GET", feedURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	// Set the User-Agent header
+	req.Header.Add("User-Agent", "gator")
+
+	// Execute the request using an HTTP client
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch RSS: %w", err)
+	}
+	defer res.Body.Close()
+
+	// Check for non-success HTTP status codes
+	if res.StatusCode >= 300 {
+		return nil, fmt.Errorf("unexpected status code: %d", res.StatusCode)
+	}
+
+	// Read the response body
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Parse the XML into an RSSFeed struct
+	var response RSSFeed
+	err = xml.Unmarshal(body, &response)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	// Unescape HTML entities in Titles and Descriptions
+	response.Channel.Title = html.UnescapeString(response.Channel.Title)
+	response.Channel.Description = html.UnescapeString(response.Channel.Description)
+	for i := range response.Channel.Item {
+		response.Channel.Item[i].Title = html.UnescapeString(response.Channel.Item[i].Title)
+		response.Channel.Item[i].Description = html.UnescapeString(response.Channel.Item[i].Description)
+	}
+
+	return &response, nil
+}
+
+func handlerAgg(s *state, cmd command) error {
+	ctx := context.Background()
+	feedURL := "https://www.wagslane.dev/index.xml"
+
+	// Fetch the RSS feed
+	rssFeed, err := fetchFeed(ctx, feedURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch feed: %w", err)
+	}
+
+	// Print the RSSFeed struct
+	fmt.Printf("Fetched RSS Feed:\n%+v\n", rssFeed)
+	return nil
+}
+
 func main() {
 	// Load the configuration
 	cfg, err := config.Read()
@@ -163,6 +246,7 @@ func main() {
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", ResetAllUsers)
 	cmds.register("users", GetUsers)
+	cmds.register("agg", handlerAgg)
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
