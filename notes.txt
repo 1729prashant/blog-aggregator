@@ -1,0 +1,1 @@
+created ~/.gatorconfig.json, see home dir
