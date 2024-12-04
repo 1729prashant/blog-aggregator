@@ -118,6 +118,23 @@ func ResetAllUsers(s *state, cmd command) error {
 	return nil
 }
 
+func GetUsers(s *state, cmd command) error {
+	userList, err := s.db.GetUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to fetch users: %v", err)
+	}
+
+	for _, userName := range userList {
+		if userName == s.config.Name {
+			fmt.Printf("* '%s (current)'\n", userName)
+		} else {
+			fmt.Printf("* '%s'\n", userName)
+		}
+	}
+
+	return nil
+}
+
 func main() {
 	// Load the configuration
 	cfg, err := config.Read()
@@ -145,6 +162,7 @@ func main() {
 	cmds.register("login", handlerLogin)
 	cmds.register("register", handlerRegister)
 	cmds.register("reset", ResetAllUsers)
+	cmds.register("users", GetUsers)
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
