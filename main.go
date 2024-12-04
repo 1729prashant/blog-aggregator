@@ -109,6 +109,15 @@ func handlerRegister(s *state, cmd command) error {
 	return nil
 }
 
+func ResetAllUsers(s *state, cmd command) error {
+	err := s.db.ResetUsers(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to clear the user table: %v", err)
+	}
+
+	return nil
+}
+
 func main() {
 	// Load the configuration
 	cfg, err := config.Read()
@@ -134,7 +143,8 @@ func main() {
 	// Initialize the commands
 	cmds := &commands{}
 	cmds.register("login", handlerLogin)
-	cmds.register("register", handlerRegister) // To be implemented
+	cmds.register("register", handlerRegister)
+	cmds.register("reset", ResetAllUsers)
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
