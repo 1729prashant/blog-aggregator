@@ -20,3 +20,7 @@ SELECT f.name, f.url, u.name
 FROM feeds f, users u
 where u.id = f.user_id
 ORDER BY f.name;
+
+
+-- name: GetFeedNamebyURL :one
+SELECT name, id FROM feeds WHERE url = $1 LIMIT 1;

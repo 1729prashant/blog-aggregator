@@ -51,6 +51,18 @@ func (c *commands) run(s *state, cmd command) error {
 	return handler(s, cmd)
 }
 
+// Middleware to ensure the user is logged in.
+func middlewareLoggedIn(handler func(s *state, cmd command, user uuid.UUID) error) func(*state, command) error {
+	return func(s *state, cmd command) error {
+		userUUID, err := s.db.GetUserUUID(context.Background(), s.config.Name)
+		if err != nil {
+			return fmt.Errorf("could not find UUID for user '%s', error: %v", s.config.Name, err)
+		}
+
+		return handler(s, cmd, userUUID)
+	}
+}
+
 // Login handler: sets the current user in the config file.
 func handlerLogin(s *state, cmd command) error {
 	if len(cmd.args) < 1 {
@@ -218,7 +230,7 @@ func handlerAgg(s *state, cmd command) error {
 	return nil
 }
 
-func handlerAddFeed(s *state, cmd command) error {
+func handlerAddFeed(s *state, cmd command, userUUID uuid.UUID) error {
 	if len(cmd.args) < 2 {
 		return fmt.Errorf("addfeed command requires the name of the feed and URL of the feed")
 	}
@@ -226,12 +238,13 @@ func handlerAddFeed(s *state, cmd command) error {
 	feedName := cmd.args[0]
 	feedURL := cmd.args[1]
 
+	/* refactor
 	// Get the current user UUID
 	userUUID, err := s.db.GetUserUUID(context.Background(), s.config.Name)
 	if err != nil {
 		return fmt.Errorf("could not find UUID for user '%s', error: %v", s.config.Name, err)
 	}
-
+	*/
 	// Check if the feed already exists using a combination of feed name and user UUID
 	existingFeed, err := s.db.GetFeed(context.Background(), database.GetFeedParams{
 		Name:   feedName,
@@ -248,8 +261,9 @@ func handlerAddFeed(s *state, cmd command) error {
 
 	// Add the new feed
 	now := time.Now()
+	feedID := uuid.New()
 	_, err = s.db.AddFeed(context.Background(), database.AddFeedParams{
-		ID:        uuid.New(),
+		ID:        feedID,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Name:      feedName,
@@ -258,6 +272,18 @@ func handlerAddFeed(s *state, cmd command) error {
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create feed entry: %v", err)
+	}
+
+	// Add the new feed in feed_followed
+	_, err = s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: now,
+		UpdatedAt: now,
+		UserID:    userUUID,
+		FeedID:    feedID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to follow feed: %v", err)
 	}
 
 	fmt.Printf("Feed '%s' successfully added.\n", feedName)
@@ -272,6 +298,83 @@ func handlerListFeeds(s *state, cmd command) error {
 	fmt.Println("Feed name, URL, User Name")
 	for _, feedname := range feedList {
 		fmt.Printf("'%s', '%s', '%s'\n", feedname.Name, feedname.Url, feedname.Name_2)
+	}
+
+	return nil
+}
+
+func handlerFollowFeeds(s *state, cmd command, userUUID uuid.UUID) error {
+	if len(cmd.args) < 1 {
+		return fmt.Errorf("follow command requires the URL of the feed")
+	}
+	feedURL := cmd.args[0]
+
+	feedNameAndID, err := s.db.GetFeedNamebyURL(context.Background(), feedURL)
+	if err != nil {
+		return fmt.Errorf("failed to fetch feed name for url, consider adding the feed first ...: %v", err)
+	}
+
+	/* refactor
+	// Get the current user UUID
+	userUUID, err := s.db.GetUserUUID(context.Background(), s.config.Name)
+	if err != nil {
+		return fmt.Errorf("could not find UUID for user '%s', error: %v", s.config.Name, err)
+	}
+	*/
+
+	// Add the new feed in feed_followed
+	now := time.Now()
+	_, err = s.db.CreateFeedFollow(context.Background(), database.CreateFeedFollowParams{
+		ID:        uuid.New(),
+		CreatedAt: now,
+		UpdatedAt: now,
+		UserID:    userUUID,
+		FeedID:    feedNameAndID.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to follow feed: %v", err)
+	}
+
+	fmt.Printf("Now following feed '%s' ('%s').\n", feedNameAndID.Name, feedURL)
+	return nil
+}
+
+func handlerFollowingFeeds(s *state, cmd command, userUUID uuid.UUID) error {
+
+	folowedFeedList, err := s.db.GetFeedFollowsForUser(context.Background(), s.config.Name)
+	if err != nil {
+		return fmt.Errorf("failed to fetch feeds: %v", err)
+	}
+	fmt.Println("Feed names")
+	for _, feedname := range folowedFeedList {
+		fmt.Printf("* '%s'\n", feedname.Name)
+	}
+
+	return nil
+}
+
+func handlerUnfollowFeeds(s *state, cmd command, userUUID uuid.UUID) error {
+	if len(cmd.args) < 1 {
+		return fmt.Errorf("follow command requires the URL of the feed")
+	}
+	feedURL := cmd.args[0]
+
+	var userNameFeedID database.GetFeedIDUserIDfromFollowsParams
+	userNameFeedID.Url = feedURL
+	userNameFeedID.Name = s.config.Name
+
+	feedNameAndID, err := s.db.GetFeedIDUserIDfromFollows(context.Background(), userNameFeedID)
+	if err != nil {
+		return fmt.Errorf("failed to fetch feed name for url: %v", err)
+	}
+
+	var feedIDnameID database.DeleteFeedFollowParams
+	feedIDnameID.FeedID = feedNameAndID.FeedID
+	feedIDnameID.UserID = feedNameAndID.UserID
+
+	err = s.db.DeleteFeedFollow(context.Background(), feedIDnameID)
+	if err != nil {
+		return fmt.Errorf("failed to unfollow feed: %v", err)
 	}
 
 	return nil
@@ -306,8 +409,11 @@ func main() {
 	cmds.register("reset", ResetAllUsers)
 	cmds.register("users", GetUsers)
 	cmds.register("agg", handlerAgg)
-	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("addfeed", middlewareLoggedIn(handlerAddFeed))
 	cmds.register("feeds", handlerListFeeds)
+	cmds.register("follow", middlewareLoggedIn(handlerFollowFeeds))
+	cmds.register("following", middlewareLoggedIn(handlerFollowingFeeds))
+	cmds.register("unfollow", middlewareLoggedIn(handlerUnfollowFeeds))
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
