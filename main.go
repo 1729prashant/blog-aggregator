@@ -218,6 +218,65 @@ func handlerAgg(s *state, cmd command) error {
 	return nil
 }
 
+func handlerAddFeed(s *state, cmd command) error {
+	if len(cmd.args) < 2 {
+		return fmt.Errorf("addfeed command requires the name of the feed and URL of the feed")
+	}
+
+	feedName := cmd.args[0]
+	feedURL := cmd.args[1]
+
+	// Get the current user UUID
+	userUUID, err := s.db.GetUserUUID(context.Background(), s.config.Name)
+	if err != nil {
+		return fmt.Errorf("could not find UUID for user '%s', error: %v", s.config.Name, err)
+	}
+
+	// Check if the feed already exists using a combination of feed name and user UUID
+	existingFeed, err := s.db.GetFeed(context.Background(), database.GetFeedParams{
+		Name:   feedName,
+		UserID: userUUID,
+	})
+	if err == nil && existingFeed == feedName {
+		return fmt.Errorf("feed '%s' already exists", feedName)
+	}
+
+	if err != nil && err.Error() != "sql: no rows in result set" {
+		// Handle database errors except "no rows found"
+		return fmt.Errorf("failed to check existing feed: %v", err)
+	}
+
+	// Add the new feed
+	now := time.Now()
+	_, err = s.db.AddFeed(context.Background(), database.AddFeedParams{
+		ID:        uuid.New(),
+		CreatedAt: now,
+		UpdatedAt: now,
+		Name:      feedName,
+		Url:       feedURL,
+		UserID:    userUUID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create feed entry: %v", err)
+	}
+
+	fmt.Printf("Feed '%s' successfully added.\n", feedName)
+	return nil
+}
+
+func handlerListFeeds(s *state, cmd command) error {
+	feedList, err := s.db.GetAllFeeds(context.Background())
+	if err != nil {
+		return fmt.Errorf("failed to fetch feeds: %v", err)
+	}
+	fmt.Println("Feed name, URL, User Name")
+	for _, feedname := range feedList {
+		fmt.Printf("'%s', '%s', '%s'\n", feedname.Name, feedname.Url, feedname.Name_2)
+	}
+
+	return nil
+}
+
 func main() {
 	// Load the configuration
 	cfg, err := config.Read()
@@ -247,6 +306,8 @@ func main() {
 	cmds.register("reset", ResetAllUsers)
 	cmds.register("users", GetUsers)
 	cmds.register("agg", handlerAgg)
+	cmds.register("addfeed", handlerAddFeed)
+	cmds.register("feeds", handlerListFeeds)
 
 	// Parse the command-line arguments
 	if len(os.Args) < 2 {
