@@ -10,6 +10,7 @@ VALUES (
 RETURNING *;
 --
 
+
 -- name: GetFeedFollowsForUser :many
 SELECT f.name , u.name
 FROM feed_follows ff, feeds f, users u 
@@ -28,6 +29,18 @@ AND u.name = $1
 AND f.url = $2;
 --
 
+
 -- name: DeleteFeedFollow :exec
 DELETE FROM feed_follows WHERE feed_id = $1 AND user_id = $2;
+--
+
+
+-- name: GetNextFeedToFetch :one
+SELECT f.url
+FROM feed_follows ff, feeds f, users u 
+WHERE ff.feed_id = f.id 
+AND ff.user_id = u.id 
+AND u.name = $1
+ORDER BY last_fetched_at NULLS FIRST
+LIMIT 1;
 --

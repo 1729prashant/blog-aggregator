@@ -53,6 +53,7 @@ func (q *Queries) CreateFeedFollow(ctx context.Context, arg CreateFeedFollowPara
 
 const deleteFeedFollow = `-- name: DeleteFeedFollow :exec
 
+
 DELETE FROM feed_follows WHERE feed_id = $1 AND user_id = $2
 `
 
@@ -67,6 +68,7 @@ func (q *Queries) DeleteFeedFollow(ctx context.Context, arg DeleteFeedFollowPara
 }
 
 const getFeedFollowsForUser = `-- name: GetFeedFollowsForUser :many
+
 
 SELECT f.name , u.name
 FROM feed_follows ff, feeds f, users u 
@@ -129,4 +131,23 @@ func (q *Queries) GetFeedIDUserIDfromFollows(ctx context.Context, arg GetFeedIDU
 	var i GetFeedIDUserIDfromFollowsRow
 	err := row.Scan(&i.FeedID, &i.UserID)
 	return i, err
+}
+
+const getNextFeedToFetch = `-- name: GetNextFeedToFetch :one
+
+
+SELECT f.url
+FROM feed_follows ff, feeds f, users u 
+WHERE ff.feed_id = f.id 
+AND ff.user_id = u.id 
+AND u.name = $1
+ORDER BY last_fetched_at NULLS FIRST
+LIMIT 1
+`
+
+func (q *Queries) GetNextFeedToFetch(ctx context.Context, name string) (string, error) {
+	row := q.db.QueryRowContext(ctx, getNextFeedToFetch, name)
+	var url string
+	err := row.Scan(&url)
+	return url, err
 }
